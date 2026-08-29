@@ -1,0 +1,25 @@
+node_modules
+dist
+.env
+# Android
+android/app/build/
+android/build/
+android/.gradle/
+android/app/src/main/assets/dist/
+android/app/release/
+*.apk
+*.aab
+*.keystore
+*.jks
+android/keystore.properties
+android/local.properties
+.gradle/
+*.log
+screenshots/
+qa-shots/
+output/
+.gev-logs/
+.gev-cache/
+.DS_Store
+.gstack/
+3d-models/

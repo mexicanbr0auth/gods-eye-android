@@ -1,0 +1,103 @@
+plugins {
+    id("com.android.application")
+    id("org.jetbrains.kotlin.android")
+}
+
+def keystorePropertiesFile = rootProject.file("keystore.properties")
+def keystoreProperties = new Properties()
+if (keystorePropertiesFile.exists()) {
+    keystoreProperties.load(new FileInputStream(keystorePropertiesFile))
+}
+
+android {
+    namespace = "com.godseye.view"
+    compileSdk = 34
+
+    defaultConfig {
+        applicationId = "com.godseye.view"
+        minSdk = 24
+        targetSdk = 34
+        versionCode = 1
+        versionName = "1.0.0"
+
+        // Permite WebView acessar file:// e conteúdo local
+        vectorDrawables {
+            useSupportLibrary = true
+        }
+    }
+
+    buildTypes {
+        release {
+            minifyEnabled = false
+            shrinkResources = false
+            proguardFiles(getDefaultProguardFile("proguard-android-optimize.txt"), "proguard-rules.pro")
+            if (keystoreProperties.containsKey("storeFile")) {
+                signingConfig = signingConfigs.release
+            }
+        }
+        debug {
+            applicationIdSuffix = ".debug"
+            debuggable = true
+        }
+    }
+
+    signingConfigs {
+        release {
+            if (keystoreProperties.containsKey("storeFile")) {
+                storeFile = file(keystoreProperties["storeFile"])
+                storePassword = keystoreProperties["storePassword"]
+                keyAlias = keystoreProperties["keyAlias"]
+                keyPassword = keystoreProperties["keyPassword"]
+            }
+        }
+    }
+
+    compileOptions {
+        sourceCompatibility = JavaVersion.VERSION_17
+        targetCompatibility = JavaVersion.VERSION_17
+    }
+    kotlinOptions {
+        jvmTarget = "17"
+    }
+
+    // Copia dist/ do Vite para assets antes do build
+    // ./gradlew assembleDebug vai primeiro rodar npm run build se dist não existir
+}
+
+dependencies {
+    implementation("androidx.core:core-ktx:1.13.1")
+    implementation("androidx.appcompat:appcompat:1.7.0")
+    implementation("com.google.android.material:material:1.12.0")
+    implementation("androidx.webkit:webkit:1.11.0")
+    implementation("androidx.swiperefreshlayout:swiperefreshlayout:1.1.0")
+}
+
+// Task para sincronizar o build web (dist) para assets
+tasks.register("syncWebAssets", Copy) {
+    def webDist = file("../../dist")
+    def assetsDist = file("src/main/assets/dist")
+    // Só copia se existir dist; caso contrário avisa
+    onlyIf { webDist.exists() }
+    from(webDist) {
+        // Exclui sourcemaps grandes se quiser economizar APK
+        // exclude "**/*.map"
+    }
+    into(assetsDist)
+    doFirst {
+        println("Sync web assets: ${webDist} -> ${assetsDist}")
+        if (!webDist.exists()) {
+            println("WARN: dist/ não encontrado. Rode 'npm run build' antes do gradle build.")
+        } else {
+            // limpa destino antes
+            delete(assetsDist)
+        }
+    }
+}
+
+// Garante que sync roda antes de merge de assets
+tasks.matching { it.name.contains("merge") && it.name.contains("Assets") }.configureEach {
+    dependsOn("syncWebAssets")
+}
+tasks.matching { it.name == "preBuild" }.configureEach {
+    dependsOn("syncWebAssets")
+}
