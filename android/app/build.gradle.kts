@@ -96,6 +96,8 @@ dependencies {
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:$coroutines")
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-core:$coroutines")
     implementation("com.google.accompanist:accompanist-permissions:0.34.0")
+    // Fallback OSM sem API key — garante mapa nunca branco (equivale OSM do web quando Google falha)
+    implementation("org.osmdroid:osmdroid-android:6.1.20")
     implementation("androidx.datastore:datastore-preferences:1.1.1")
     implementation("com.google.code.gson:gson:2.11.0")
     debugImplementation("androidx.compose.ui:ui-tooling")
