@@ -1,4 +1,4 @@
-name: Android Build
+name: Android Build (Native)
 
 on:
   push:
@@ -8,62 +8,11 @@ on:
   workflow_dispatch:
 
 jobs:
-  build-web:
-    name: Build Web (Vite)
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-
-      - uses: actions/setup-node@v4
-        with:
-          node-version: '24'
-          cache: 'npm'
-
-      - name: Install deps
-        run: PUPPETEER_SKIP_DOWNLOAD=1 npm ci
-
-      - name: Build web (ANDROID_BUILD=1 -> base ./)
-        run: ANDROID_BUILD=1 npm run build
-        env:
-          # Chaves podem ser vazias no CI — app Android pedirá ao usuário em runtime
-          GOOGLE_MAPS_API_KEY: ${{ secrets.GOOGLE_MAPS_API_KEY }}
-          CESIUM_ION_TOKEN: ${{ secrets.CESIUM_ION_TOKEN }}
-
-      - name: Sync to Android assets
-        run: node scripts/sync-android-assets.mjs
-
-      - uses: actions/upload-artifact@v4
-        with:
-          name: dist-web
-          path: dist
-          if-no-files-found: error
-
-      - uses: actions/upload-artifact@v4
-        with:
-          name: android-assets
-          path: android/app/src/main/assets/dist
-          if-no-files-found: error
-
   build-apk:
-    name: Build APK
-    needs: build-web
+    name: Build Native APK
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-
-      - uses: actions/setup-node@v4
-        with:
-          node-version: '24'
-          cache: 'npm'
-
-      - name: Install & build web
-        run: |
-          PUPPETEER_SKIP_DOWNLOAD=1 npm ci
-          ANDROID_BUILD=1 npm run build
-          node scripts/sync-android-assets.mjs
-        env:
-          GOOGLE_MAPS_API_KEY: ${{ secrets.GOOGLE_MAPS_API_KEY }}
-          CESIUM_ION_TOKEN: ${{ secrets.CESIUM_ION_TOKEN }}
 
       - uses: actions/setup-java@v4
         with:
@@ -78,12 +27,11 @@ jobs:
           gradle-version: '8.9'
 
       - name: Make gradlew executable
-        run: |
-          if [ -f android/gradlew ]; then chmod +x android/gradlew; fi
-          # Fallback wrapper jar caso não exista gradlew — usa gradle direto
-          ls -la android/ || true
+        run: chmod +x android/gradlew || true; ls -la android/ || true
 
-      - name: Build Debug APK
+      - name: Build Debug APK (nativo)
+        env:
+          GOOGLE_MAPS_API_KEY: ${{ secrets.GOOGLE_MAPS_API_KEY }}
         run: |
           if [ -f android/gradlew ]; then
             android/gradlew -p android assembleDebug --stacktrace
@@ -92,6 +40,8 @@ jobs:
           fi
 
       - name: Build Release APK (unsigned)
+        env:
+          GOOGLE_MAPS_API_KEY: ${{ secrets.GOOGLE_MAPS_API_KEY }}
         run: |
           if [ -f android/gradlew ]; then
             android/gradlew -p android assembleRelease --stacktrace
@@ -101,13 +51,13 @@ jobs:
 
       - uses: actions/upload-artifact@v4
         with:
-          name: apk-debug
+          name: apk-debug-native
           path: android/app/build/outputs/apk/debug/*.apk
           if-no-files-found: error
 
       - uses: actions/upload-artifact@v4
         with:
-          name: apk-release-unsigned
+          name: apk-release-unsigned-native
           path: android/app/build/outputs/apk/release/*.apk
           if-no-files-found: warn
 
@@ -121,16 +71,13 @@ jobs:
     steps:
       - uses: actions/download-artifact@v4
         with:
-          name: apk-debug
+          name: apk-debug-native
           path: ./apks
-
       - uses: actions/download-artifact@v4
         with:
-          name: apk-release-unsigned
+          name: apk-release-unsigned-native
           path: ./apks
-
-      - name: Create GitHub Release
-        uses: softprops/action-gh-release@v2
+      - uses: softprops/action-gh-release@v2
         with:
           files: ./apks/**/*.apk
           generate_release_notes: true

@@ -1,46 +1,36 @@
 plugins {
     id("com.android.application")
     id("org.jetbrains.kotlin.android")
+    id("org.jetbrains.kotlin.plugin.serialization")
 }
 
 def keystorePropertiesFile = rootProject.file("keystore.properties")
 def keystoreProperties = new Properties()
-if (keystorePropertiesFile.exists()) {
-    keystoreProperties.load(new FileInputStream(keystorePropertiesFile))
-}
+if (keystorePropertiesFile.exists()) keystoreProperties.load(new FileInputStream(keystorePropertiesFile))
 
 android {
     namespace = "com.godseye.view"
     compileSdk = 34
-
     defaultConfig {
         applicationId = "com.godseye.view"
-        minSdk = 24
+        minSdk = 26
         targetSdk = 34
-        versionCode = 1
-        versionName = "1.0.0"
-
-        // Permite WebView acessar file:// e conteúdo local
-        vectorDrawables {
-            useSupportLibrary = true
-        }
+        versionCode = 2
+        versionName = "2.0.0-native"
+        vectorDrawables { useSupportLibrary = true }
+        buildConfigField "String", "CESIUM_ION_TOKEN_DEFAULT", "\"\""
+        // Permite build sem chave — igual web que pede em runtime via AppConfig/DataStore
+        manifestPlaceholders["GOOGLE_MAPS_API_KEY"] = (System.getenv("GOOGLE_MAPS_API_KEY") ?: findProperty("GOOGLE_MAPS_API_KEY") as? String ?: "YOUR_GOOGLE_MAPS_API_KEY")
     }
-
     buildTypes {
         release {
             minifyEnabled = false
             shrinkResources = false
             proguardFiles(getDefaultProguardFile("proguard-android-optimize.txt"), "proguard-rules.pro")
-            if (keystoreProperties.containsKey("storeFile")) {
-                signingConfig = signingConfigs.release
-            }
+            if (keystoreProperties.containsKey("storeFile")) signingConfig = signingConfigs.release
         }
-        debug {
-            applicationIdSuffix = ".debug"
-            debuggable = true
-        }
+        debug { applicationIdSuffix = ".debug"; debuggable = true }
     }
-
     signingConfigs {
         release {
             if (keystoreProperties.containsKey("storeFile")) {
@@ -51,57 +41,61 @@ android {
             }
         }
     }
-
-    buildFeatures {
-        buildConfig = true
-    }
-
-    compileOptions {
-        sourceCompatibility = JavaVersion.VERSION_17
-        targetCompatibility = JavaVersion.VERSION_17
-    }
-    kotlinOptions {
-        jvmTarget = "17"
-    }
-
-    // Copia dist/ do Vite para assets antes do build
-    // ./gradlew assembleDebug vai primeiro rodar npm run build se dist não existir
+    compileOptions { sourceCompatibility = JavaVersion.VERSION_17; targetCompatibility = JavaVersion.VERSION_17 }
+    kotlinOptions { jvmTarget = "17" }
+    buildFeatures { compose = true; buildConfig = true }
+    composeOptions { kotlinCompilerExtensionVersion = "1.5.14" }
+    packaging { resources { excludes += "/META-INF/{AL2.0,LGPL2.1}" } }
 }
 
 dependencies {
+    val composeBom = "2024.09.03"
+    val lifecycle = "2.8.6"
+    val retrofit = "2.11.0"
+    val okhttp = "4.12.0"
+    val coroutines = "1.8.1"
+    val mapsCompose = "4.3.3"
+    val playServicesMaps = "19.0.0"
+    val playServicesLocation = "21.3.0"
+
+    implementation(platform("androidx.compose:compose-bom:$composeBom"))
+    implementation("androidx.compose.ui:ui")
+    implementation("androidx.compose.ui:ui-tooling-preview")
+    implementation("androidx.compose.material3:material3:1.3.1")
+    implementation("androidx.compose.material:material-icons-extended")
+    implementation("androidx.activity:activity-compose:1.9.3")
+    implementation("androidx.lifecycle:lifecycle-runtime-compose:$lifecycle")
+    implementation("androidx.lifecycle:lifecycle-viewmodel-compose:$lifecycle")
+    implementation("androidx.navigation:navigation-compose:2.8.4")
     implementation("androidx.core:core-ktx:1.13.1")
     implementation("androidx.appcompat:appcompat:1.7.0")
     implementation("com.google.android.material:material:1.12.0")
-    implementation("androidx.webkit:webkit:1.11.0")
-    implementation("androidx.swiperefreshlayout:swiperefreshlayout:1.1.0")
-}
 
-// Task para sincronizar o build web (dist) para assets
-tasks.register("syncWebAssets", Copy) {
-    def webDist = file("../../dist")
-    def assetsDist = file("src/main/assets/dist")
-    // Só copia se existir dist; caso contrário avisa
-    onlyIf { webDist.exists() }
-    from(webDist) {
-        // Exclui sourcemaps grandes se quiser economizar APK
-        // exclude "**/*.map"
-    }
-    into(assetsDist)
-    doFirst {
-        println("Sync web assets: ${webDist} -> ${assetsDist}")
-        if (!webDist.exists()) {
-            println("WARN: dist/ não encontrado. Rode 'npm run build' antes do gradle build.")
-        } else {
-            // limpa destino antes
-            delete(assetsDist)
-        }
-    }
-}
+    // Maps 3D nativo (equivale a Cesium + Google Photorealistic 3D Tiles no web)
+    implementation("com.google.android.gms:play-services-maps:$playServicesMaps")
+    implementation("com.google.android.gms:play-services-location:$playServicesLocation")
+    implementation("com.google.maps.android:maps-compose:$mapsCompose")
+    implementation("com.google.maps.android:maps-utils:3.8.2")
+    implementation("com.google.maps.android:maps-ktx:$playServicesMaps")
+    // Photorealistic 3D: via Maps SDK 3D buildings + custom TileOverlay (TomTom/OSM)
 
-// Garante que sync roda antes de merge de assets
-tasks.matching { it.name.contains("merge") && it.name.contains("Assets") }.configureEach {
-    dependsOn("syncWebAssets")
-}
-tasks.matching { it.name == "preBuild" }.configureEach {
-    dependsOn("syncWebAssets")
+    // Rede (equivale a vite.config.js proxies: opensky/celestrak/overpass/etc)
+    implementation("com.squareup.retrofit2:retrofit:$retrofit")
+    implementation("com.squareup.retrofit2:converter-gson:$retrofit")
+    implementation("org.jetbrains.kotlinx:kotlinx-serialization-json:1.7.3")
+    implementation("com.jakewharton.retrofit:retrofit2-kotlinx-serialization-converter:1.0.0")
+    implementation("com.squareup.okhttp3:okhttp:$okhttp")
+    implementation("com.squareup.okhttp3:logging-interceptor:$okhttp")
+    implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:$coroutines")
+    implementation("org.jetbrains.kotlinx:kotlinx-coroutines-core:$coroutines")
+
+    // Permissões — equivale a vite rateLimiter + manifest
+    implementation("com.google.accompanist:accompanist-permissions:0.34.0")
+
+    // Util
+    implementation("androidx.datastore:datastore-preferences:1.1.1")
+    implementation("com.google.code.gson:gson:2.11.0")
+
+    debugImplementation("androidx.compose.ui:ui-tooling")
+    debugImplementation("androidx.compose.ui:ui-test-manifest")
 }

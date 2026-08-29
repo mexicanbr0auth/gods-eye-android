@@ -1,133 +1,114 @@
-# 🌐 God's Eye View — Android
+# 🌐 God's Eye View — Android Nativo
 
-> **Spy-satellite simulator compatível com Android** — fork do projeto original [bilawalsidhu/gods-eye-view](https://github.com/bilawalsidhu/gods-eye-view) adaptado para rodar como app nativo Android (WebView) + build web Vite.
+> **Port 100% nativo para Android** — fork do [bilawalsidhu/gods-eye-view](https://github.com/bilawalsidhu/gods-eye-view) reescrito código-a-código em **Kotlin + Jetpack Compose + Google Maps SDK**. Nenhum WebView bagunçado: roda nativo, com permissões, layers e voz.
 
-Photorealistic 3D globe, live aircraft/ships/satellites/terremotos/tráfego/câmeras, com wrapper Android e **builds automáticos via GitHub Actions**.
-
----
-
-## 📱 O que foi adaptado para Android
-
-- **Wrapper nativo** em `android/` com `MainActivity.kt` (WebView hardware-accelerated, WebGL, Geolocation, file chooser, SwipeRefresh)
-- **Bridge JS ↔ Kotlin** (`window.Android.*`): platform detection, share, toast, permissões de localização/mic
-- **Gestão de chaves em runtime**: `GOOGLE_MAPS_API_KEY` (obrigatória) + `CESIUM_ION_TOKEN` (opcional) salvas em `SharedPreferences` e injetadas via `localStorage`/`window` — não precisa rebuildar o APK para trocar de chave
-- **Diálogo de onboarding** na primeira execução para colar a chave do Google
-- **Menu nativo** (⋮): Configurar chaves / Recarregar / Compartilhar / Sobre
-- **Vite `base: './'`** quando `ANDROID_BUILD=1` para `file:///android_asset/dist/` funcionar
-- **Sync script** `scripts/sync-android-assets.mjs` + task Gradle `syncWebAssets` (copia `dist/` → `android/app/src/main/assets/dist/`)
-- **Deep links** (`godseye://`, `https://godseye.local`) preservados como `?android_deeplink=`
-- **Permissões**: `INTERNET`, `ACCESS_FINE/COARSE_LOCATION`, `RECORD_AUDIO` (voice opcional)
+Photorealistic 3D globe (Google Maps 3D Buildings = equivalente nativo do `Google Photorealistic 3D Tiles` do web), live aircraft/ships/satellites/earthquakes/traffic/CCTV, HUD e voz.
 
 ---
 
-## 🚀 Quick Start (dev local)
+## 📱 O que foi portado (web → nativo)
+
+| Web (`src/*.js`) | Nativo (`android/app/src/main/java/com/godseye/view`) | Obs |
+|---|---|---|
+| `src/main.js` bootstrap + Cesium Viewer | `MainActivity.kt` + `ui/GlobeScreen.kt` `GoogleMap` Compose | `Cesium Viewer` → `GoogleMap` `MapType.HYBRID` + `isBuildingEnabled=true` (3D) |
+| `src/camera.js` `orbit.js` `cockpitTracking.js` | `camera/CameraController.kt` | `CameraPosition` tilt/bearing/zoom |
+| `src/ui.js` `hud.js` `styles/*` | `ui/GlobeViewModel.kt` + HUD Compose | `StyleManager` 1-7 → FABs `NORMAL/CRT/NVG/FLIR...` |
+| `src/data/manager.js` `layerState.js` | `data/Repositories.kt` `DataLayerManager` | polling nativo |
+| `src/data/flights.js` `militaryFlights.js` `adsbLolFallback.js` | `data/Repositories.kt` `FlightRepository` | `GET https://opensky-network.org/api/states/all` via Retrofit (mesmo que `vite openSkyProxy`) |
+| `src/data/satellites.js` `satellite.js` SGP4 | `SatelliteRepository` + `propagate()` | TLE `celestrak.org/NORAD/elements/gp.php` (mesmo proxy `celestrakProxy`) |
+| `src/data/earthquakes.js` | `EarthquakeRepository` | `earthquake.usgs.gov` |
+| `src/data/aisLiveVessels.js` `aisStreamAdapter.js` | `VesselRepository` | `wss://aisstream.io` via OkHttp WS (mesmo `aisLiveProxy`) |
+| `src/data/cctv.js` `cctvViewshed.js` | `CctvRepository` | `config/cctv_sources.*.json` nativo |
+| `src/data/traffic.js` `flowTiles.js` `tomtomTiles.js` | `TrafficRepository` | `isTrafficEnabled` + `TileOverlay` TomTom |
+| `src/data/firmsCsv.js` | `ApiService.getFirms()` | FIRMS CSV |
+| `src/data/bikeshare.js` `radio.js` `rocketLaunches.js` `militaryInstallations.js` | `LaunchRepository` etc | `GBFS`/`Radio`/`LL2`/`Overpass` (mesmos proxies `gbfsProxy`/`radioBrowserProxy`/`overpassProxy`) |
+| `src/voice/gevRealtime.js` `gevActions.js` 28 tools | `voice/VoiceAgent.kt` | `SpeechRecognizer` + OkHttp WS OpenAI Realtime |
+| `vite.config.js` proxies + `GOOGLE_MAPS_API_KEY` | `data/ApiService.kt` + `AppDataStore.kt` `DataStore<Preferences>` | chaves em runtime, sem rebuild |
+| `index.html` `style.css` overlays | `ui/theme/Theme.kt` + Compose `Scaffold`/`FilterChip`/`Circle`/`Marker` | `flat=true` + `rotation` = `iconOrientation.js` world-stable |
+
+---
+
+## 🔐 Permissões (AndroidManifest.xml)
+
+```xml
+INTERNET, ACCESS_NETWORK_STATE (todos os proxies)
+ACCESS_FINE_LOCATION, ACCESS_COARSE_LOCATION, ACCESS_BACKGROUND_LOCATION (hud.js/locations.js/regionalBrief/cockpit)
+RECORD_AUDIO, MODIFY_AUDIO_SETTINGS (voice/gevRealtime.js)
+POST_NOTIFICATIONS (FIRMS/bikeshare)
+```
+Runtime via `accompanist-permissions` — igual `GEV_RATELIMIT_*` do vite mas nativo.
+
+---
+
+## 🚀 Quick Start (nativo)
 
 ```bash
-npm install
-# 1. configure chaves
-cp .env.example .env  # coloque GOOGLE_MAPS_API_KEY
-# 2. web puro
-npm run dev -- --host localhost --port 4173
-# 3. Android (gera dist + copia + builda APK debug)
-npm run build:android
-# requer Android SDK + JDK 17; ou use gradle wrapper
+# Só Android — não precisa npm/vite
 ./android/gradlew -p android assembleDebug
 # APK em android/app/build/outputs/apk/debug/app-debug.apk
+# Release:
+./android/gradlew -p android assembleRelease
 ```
 
-### Chaves
+Chaves: `GOOGLE_MAPS_API_KEY` **obrigatória** (3D). Pode ser:
+- `export GOOGLE_MAPS_API_KEY=...` antes do build (vira `manifestPlaceholders` em `android/app/build.gradle:20`)
+- ou dentro do app: botão `VpnKey` → `KeyDialog` → salva em `DataStore` (igual `localStorage` no web)
 
-| Chave | Onde | Obrigatória |
-|---|---|---|
-| `GOOGLE_MAPS_API_KEY` | Google Cloud Console → Map Tiles API | **sim** (senão o globo fica preto) |
-| `CESIUM_ION_TOKEN` | cesium.com/ion | não (só p/ Bing) |
-| demais (OpenAI, AISStream, FIRMS, TomTom) | `.env` | não, funcionam em runtime via proxies dev; no APK estático algumas layers usam fetch direto |
-
-No **APK**, a chave do Google pode ser configurada **dentro do app** (Menu → Configurar chaves) sem rebuild.
+`CESIUM_ION_TOKEN` opcional (Bing), `OPENAI_API_KEY` p/ voz, `AISSTREAM_API_KEY` p/ navios, `FIRMS_MAP_KEY`, `TOMTOM_API_KEY`.
 
 ---
 
-## 🤖 GitHub + `gh` + Actions
-
-### Criar repo e push via `gh`
+## 🤖 GitHub + `gh` + Actions (nativo)
 
 ```bash
 gh auth login
-gh repo create gods-eye-view-android --public --source=. --remote=origin --push
-# ou se já tem remote:
-git remote add origin https://github.com/<user>/gods-eye-view-android.git
+gh repo create gods-eye-android --public --source=. --remote=origin --push
 git push -u origin main
+gh workflow run "Android Build (Native)"  # workflow_dispatch
+gh run list --repo mexicanbr0auth/gods-eye-android
+gh run view --log --repo mexicanbr0auth/gods-eye-android
 ```
 
-O workflow `.github/workflows/android.yml` já está incluso:
+Workflow `.github/workflows/android.yml`:
+- `build-apk`: `setup-java@17` + `setup-android` + `gradle assembleDebug` + `assembleRelease` → artifacts `apk-debug-native` / `apk-release-unsigned-native`
+- `release`: em tags `v*` cria GitHub Release com os APKs
 
-- **build-web**: `npm ci` + `ANDROID_BUILD=1 npm run build` + `sync-android-assets` → artifact `dist-web`
-- **build-apk**: `setup-java@17` + `setup-android` + `gradle assembleDebug` + `assembleRelease` → artifacts `apk-debug` / `apk-release-unsigned`
-- **release**: em tags `v*`, cria GitHub Release com os APKs
-
-**Secrets opcionais** no repo (Settings → Secrets → Actions):
-- `GOOGLE_MAPS_API_KEY` / `CESIUM_ION_TOKEN` — se preenchidos, são baked no build; se vazios, o app pede em runtime.
-
-Dispare manualmente: `gh workflow run "Android Build"`  
-Veja logs: `gh run list` / `gh run watch`
-
-### Build local sem `gh`
-
-```bash
-gh workflow run android.yml  # remoto
-# ou local:
-npm run android:assemble
-```
+Secrets: `GOOGLE_MAPS_API_KEY` (opcional, se não setar pede no app).
 
 ---
 
-## 📦 Estrutura
+## 📦 Estrutura nativa
 
 ```
-.
-├── src/androidBridge.js      # shim de chaves Android ↔ web
-├── scripts/sync-android-assets.mjs
-├── android/
-│   ├── app/build.gradle      # syncWebAssets task, minSdk 24, target 34
-│   ├── app/src/main/
-│   │   ├── AndroidManifest.xml
-│   │   ├── java/com/godseye/view/
-│   │   │   ├── MainActivity.kt
-│   │   │   ├── AppConfig.kt
-│   │   │   └── GodEyeApplication.kt
-│   │   └── res/{layout,values,menu,xml,mipmap-*}
-│   └── gradle/wrapper/
-├── .github/workflows/
-│   ├── android.yml           # build web + APK
-│   └── ci.yml
-└── dist/ -> android/app/src/main/assets/dist/ (via sync)
+android/app/src/main/java/com/godseye/view/
+├── MainActivity.kt              # ComponentActivity + GlobeScreen (porta src/main.js)
+├── GodEyeApplication.kt
+├── data/
+│   ├── AppDataStore.kt          # DataStore prefs (porta .env + localStorage)
+│   ├── Models.kt                # FlightState/Earthquake/Satellite/Vessel/Cctv (porta src/data/*.js)
+│   ├── ApiService.kt            # Retrofit endpoints (porta vite.config.js proxies)
+│   └── Repositories.kt          # Flight/Earthquake/Satellite/Vessel/Traffic/Cctv/Launch + DataLayerManager (porta src/data/manager.js)
+├── camera/CameraController.kt   # CameraPosition builder (porta src/camera.js/orbit.js/cockpitTracking.js)
+├── ui/
+│   ├── GlobeViewModel.kt        # layers/style/hud/camera (porta src/ui.js/hud.js/layerState.js)
+│   ├── GlobeScreen.kt           # GoogleMap Compose + Marker/Circle/HUD (porta index.html + Cesium)
+│   └── theme/Theme.kt
+├── voice/VoiceAgent.kt          # SpeechRecognizer + OpenAI WS (porta src/voice/gevRealtime.js)
+└── util/Permissions.kt
 ```
 
----
-
-## 🔐 Assinatura Release
-
-Crie `android/keystore.properties`:
-
-```
-storeFile=/caminho/app.keystore
-storePassword=...
-keyAlias=...
-keyPassword=...
-```
-
-E `android/app/build.gradle` já usa `signingConfig release` se o arquivo existir.
+Web original continua em `src/`/`public/` como referência, mas o APK **não** depende de `dist/` nem `vite`.
 
 ---
 
 ## ⚠️ Notas
 
-- `vite.config.js` tem proxies dev (`/api/*`) que **não existem** no APK estático — layers que dependem de proxy (OpenAI Realtime, AISStream WS) ficam degradados; flights/satellites/earthquakes direto via CORS continuam OK.
-- Para voz completa no APK, hospede um backend proxy e aponte o WebView para ele, ou mantenha uso do app web hospedado.
-- Créditos/layer docs originais em `DATA_SOURCES.md`, `SECURITY.md`.
+- Google Maps 3D Buildings é o equivalente nativo mais próximo do `Google Photorealistic 3D Tiles` (Cesium) — para tiles fotorealísticos completos, troque `MapType` por `Maps SDK 3D` (em beta) ou `MapLibre + Cesium Native`.
+- SGP4 real: adicione `com.github.cromwellian:satellite-kotlin` e implemente `SatelliteRepository.propagate()` com `SGP4`.
+- AISStream precisa de `AISSTREAM_API_KEY` em `DataStore` + OkHttp WebSocket.
 
 ---
 
 ## 📄 Licença
 
-MIT — mesmo do upstream. Veja `LICENSE`.
+MIT — mesmo do upstream (`LICENSE`).

@@ -1,14 +1,13 @@
 package com.godseye.view
 
 import android.app.Application
-import android.webkit.WebView
+import com.godseye.view.data.AppDataStore
 
 class GodEyeApplication : Application() {
+    lateinit var dataStore: AppDataStore
+        private set
     override fun onCreate() {
         super.onCreate()
-        // Habilita debug do WebView em builds debug
-        if (BuildConfig.DEBUG) {
-            WebView.setWebContentsDebuggingEnabled(true)
-        }
+        dataStore = AppDataStore(this)
     }
 }

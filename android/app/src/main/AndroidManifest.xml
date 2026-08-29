@@ -2,18 +2,23 @@
 <manifest xmlns:android="http://schemas.android.com/apk/res/android"
     xmlns:tools="http://schemas.android.com/tools">
 
-    <!-- Rede / WebGL / Globe -->
+    <!-- Rede / Web (equivale a todos os proxies vite.config.js: opensky/celestrak/overpass/gbfs/cctv/adsblol/ais/tomtom/firms/nominatim/open-meteo) -->
     <uses-permission android:name="android.permission.INTERNET" />
     <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
-    <!-- Localização para “fly to me” e briefing regional -->
+    <!-- Localização: src/hud.js, src/locations.js, regionalBrief, cockpitTracking -->
     <uses-permission android:name="android.permission.ACCESS_FINE_LOCATION" />
     <uses-permission android:name="android.permission.ACCESS_COARSE_LOCATION" />
-    <!-- Voz opcional (Web Speech / mic) -->
+    <uses-permission android:name="android.permission.ACCESS_BACKGROUND_LOCATION" />
+    <!-- Voz: src/voice/gevRealtime.js (OpenAI Realtime) -->
     <uses-permission android:name="android.permission.RECORD_AUDIO" />
     <uses-permission android:name="android.permission.MODIFY_AUDIO_SETTINGS" />
+    <!-- Notificações para FIRMS/Bikeshare -->
+    <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
 
     <uses-feature android:name="android.hardware.location.gps" android:required="false" />
     <uses-feature android:name="android.hardware.microphone" android:required="false" />
+    <uses-feature android:name="android.hardware.camera" android:required="false" />
+    <uses-feature android:glEsVersion="0x00020000" android:required="true" />
 
     <application
         android:name=".GodEyeApplication"
@@ -23,44 +28,41 @@
         android:icon="@mipmap/ic_launcher"
         android:roundIcon="@mipmap/ic_launcher_round"
         android:label="@string/app_name"
-        android:supportsRtl="true"
         android:theme="@style/Theme.GodEye"
+        android:supportsRtl="true"
+        android:hardwareAccelerated="true"
         android:usesCleartextTraffic="false"
-        tools:targetApi="31">
+        tools:targetApi="33">
+
+        <!-- Google Maps API Key: injetada via manifest placeholder ou via AppConfig runtime (igual web window.__GOOGLE_MAPS_API_KEY__) -->
+        <meta-data android:name="com.google.android.geo.API_KEY" android:value="${GOOGLE_MAPS_API_KEY}" />
 
         <activity
             android:name=".MainActivity"
             android:exported="true"
-            android:configChanges="orientation|keyboardHidden|screenSize|screenLayout|smallestScreenSize|uiMode"
-            android:hardwareAccelerated="true"
-            android:theme="@style/Theme.GodEye"
-            android:windowSoftInputMode="adjustResize">
-
+            android:configChanges="orientation|keyboardHidden|screenSize|screenLayout|smallestScreenSize|density|uiMode"
+            android:windowSoftInputMode="adjustResize"
+            android:theme="@style/Theme.GodEye">
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />
                 <category android:name="android.intent.category.LAUNCHER" />
             </intent-filter>
-
-            <!-- Deep link para share-links serializados: godseye:// ... e https -->
             <intent-filter android:autoVerify="true">
                 <action android:name="android.intent.action.VIEW" />
                 <category android:name="android.intent.category.DEFAULT" />
                 <category android:name="android.intent.category.BROWSABLE" />
                 <data android:scheme="https" android:host="godseye.local" />
                 <data android:scheme="godseye" android:host="view" />
+                <data android:scheme="geo" />
             </intent-filter>
         </activity>
 
-        <!-- Necessário para file chooser / upload se houver -->
         <provider
             android:name="androidx.core.content.FileProvider"
             android:authorities="${applicationId}.fileprovider"
             android:exported="false"
             android:grantUriPermissions="true">
-            <meta-data
-                android:name="android.support.FILE_PROVIDER_PATHS"
-                android:resource="@xml/file_paths" />
+            <meta-data android:name="android.support.FILE_PROVIDER_PATHS" android:resource="@xml/file_paths" />
         </provider>
-
     </application>
 </manifest>
