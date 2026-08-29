@@ -1,12 +1,17 @@
+import java.util.Properties
+import java.io.FileInputStream
+
 plugins {
     id("com.android.application")
     id("org.jetbrains.kotlin.android")
     id("org.jetbrains.kotlin.plugin.serialization")
 }
 
-def keystorePropertiesFile = rootProject.file("keystore.properties")
-def keystoreProperties = new Properties()
-if (keystorePropertiesFile.exists()) keystoreProperties.load(new FileInputStream(keystorePropertiesFile))
+val keystorePropertiesFile = rootProject.file("keystore.properties")
+val keystoreProperties = Properties()
+if (keystorePropertiesFile.exists()) {
+    FileInputStream(keystorePropertiesFile).use { keystoreProperties.load(it) }
+}
 
 android {
     namespace = "com.godseye.view"
@@ -18,30 +23,37 @@ android {
         versionCode = 2
         versionName = "2.0.0-native"
         vectorDrawables { useSupportLibrary = true }
-        buildConfigField "String", "CESIUM_ION_TOKEN_DEFAULT", "\"\""
-        // Permite build sem chave — igual web que pede em runtime via AppConfig/DataStore
-        manifestPlaceholders["GOOGLE_MAPS_API_KEY"] = (System.getenv("GOOGLE_MAPS_API_KEY") ?: findProperty("GOOGLE_MAPS_API_KEY") as? String ?: "YOUR_GOOGLE_MAPS_API_KEY")
+        buildConfigField("String", "CESIUM_ION_TOKEN_DEFAULT", "\"\"")
+        manifestPlaceholders["GOOGLE_MAPS_API_KEY"] = (System.getenv("GOOGLE_MAPS_API_KEY") ?: (findProperty("GOOGLE_MAPS_API_KEY") as? String) ?: "YOUR_GOOGLE_MAPS_API_KEY")
     }
     buildTypes {
         release {
-            minifyEnabled = false
-            shrinkResources = false
+            isMinifyEnabled = false
+            isShrinkResources = false
             proguardFiles(getDefaultProguardFile("proguard-android-optimize.txt"), "proguard-rules.pro")
-            if (keystoreProperties.containsKey("storeFile")) signingConfig = signingConfigs.release
+            if (keystoreProperties.containsKey("storeFile")) {
+                signingConfig = signingConfigs.getByName("release")
+            }
         }
-        debug { applicationIdSuffix = ".debug"; debuggable = true }
+        debug {
+            applicationIdSuffix = ".debug"
+            isDebuggable = true
+        }
     }
     signingConfigs {
-        release {
+        create("release") {
             if (keystoreProperties.containsKey("storeFile")) {
-                storeFile = file(keystoreProperties["storeFile"])
-                storePassword = keystoreProperties["storePassword"]
-                keyAlias = keystoreProperties["keyAlias"]
-                keyPassword = keystoreProperties["keyPassword"]
+                storeFile = file(keystoreProperties["storeFile"] as String)
+                storePassword = keystoreProperties["storePassword"] as String
+                keyAlias = keystoreProperties["keyAlias"] as String
+                keyPassword = keystoreProperties["keyPassword"] as String
             }
         }
     }
-    compileOptions { sourceCompatibility = JavaVersion.VERSION_17; targetCompatibility = JavaVersion.VERSION_17 }
+    compileOptions {
+        sourceCompatibility = JavaVersion.VERSION_17
+        targetCompatibility = JavaVersion.VERSION_17
+    }
     kotlinOptions { jvmTarget = "17" }
     buildFeatures { compose = true; buildConfig = true }
     composeOptions { kotlinCompilerExtensionVersion = "1.5.14" }
@@ -70,16 +82,11 @@ dependencies {
     implementation("androidx.core:core-ktx:1.13.1")
     implementation("androidx.appcompat:appcompat:1.7.0")
     implementation("com.google.android.material:material:1.12.0")
-
-    // Maps 3D nativo (equivale a Cesium + Google Photorealistic 3D Tiles no web)
     implementation("com.google.android.gms:play-services-maps:$playServicesMaps")
     implementation("com.google.android.gms:play-services-location:$playServicesLocation")
     implementation("com.google.maps.android:maps-compose:$mapsCompose")
     implementation("com.google.maps.android:maps-utils:3.8.2")
     implementation("com.google.maps.android:maps-ktx:$playServicesMaps")
-    // Photorealistic 3D: via Maps SDK 3D buildings + custom TileOverlay (TomTom/OSM)
-
-    // Rede (equivale a vite.config.js proxies: opensky/celestrak/overpass/etc)
     implementation("com.squareup.retrofit2:retrofit:$retrofit")
     implementation("com.squareup.retrofit2:converter-gson:$retrofit")
     implementation("org.jetbrains.kotlinx:kotlinx-serialization-json:1.7.3")
@@ -88,14 +95,9 @@ dependencies {
     implementation("com.squareup.okhttp3:logging-interceptor:$okhttp")
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:$coroutines")
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-core:$coroutines")
-
-    // Permissões — equivale a vite rateLimiter + manifest
     implementation("com.google.accompanist:accompanist-permissions:0.34.0")
-
-    // Util
     implementation("androidx.datastore:datastore-preferences:1.1.1")
     implementation("com.google.code.gson:gson:2.11.0")
-
     debugImplementation("androidx.compose.ui:ui-tooling")
     debugImplementation("androidx.compose.ui:ui-test-manifest")
 }

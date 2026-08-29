@@ -20,7 +20,6 @@ import com.google.android.gms.maps.CameraUpdateFactory
 import com.google.android.gms.maps.model.*
 import com.google.maps.android.compose.*
 import com.godseye.view.data.LayerId
-import kotlinx.coroutines.launch
 
 // Porta nativa de index.html + src/ui.js + src/hud.js + style.css
 // No web: Cesium Viewer + #cesiumContainer; no nativo: GoogleMap Compose com buildings 3D + tilt
