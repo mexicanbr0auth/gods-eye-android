@@ -1,6 +1,8 @@
 package com.godseye.view
 
+import android.content.pm.PackageManager
 import android.os.Bundle
+import android.util.Log
 import android.widget.Toast
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
@@ -12,6 +14,7 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.godseye.view.data.AppDataStore
+import com.godseye.view.data.MapKeyProvider
 import com.godseye.view.ui.GlobeScreen
 import com.godseye.view.ui.GlobeViewModel
 import com.godseye.view.ui.theme.GodEyeTheme
@@ -79,7 +82,7 @@ fun KeyDialog(
         title = { Text("Configurar chaves") },
         text = {
             Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                Text("GOOGLE_MAPS_API_KEY — salva em DataStore (persiste). Para Google 3D precisa rebuild com secret; OSM funciona na hora.", style = MaterialTheme.typography.bodySmall)
+                Text("GOOGLE_MAPS_API_KEY — salva em DataStore e já aplica no Maps SDK (sem rebuild). OSM é fallback se falhar.", style = MaterialTheme.typography.bodySmall)
                 OutlinedTextField(google, { google = it }, label = { Text("Google Maps API Key") }, singleLine = true, modifier = Modifier.fillMaxWidth())
                 if (google.isNotBlank() && !google.startsWith("AIza")) Text("⚠️ Normalmente começa com AIza… confira no Google Cloud", color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.labelSmall)
                 OutlinedTextField(cesium, { cesium = it }, label = { Text("CESIUM_ION_TOKEN (opcional)") }, singleLine = true, modifier = Modifier.fillMaxWidth())
@@ -95,7 +98,6 @@ fun KeyDialog(
                     saving = true
                     scope.launch {
                         try {
-                            // Salva TRIMMED — bug anterior salvava com espaços
                             val g = google.trim()
                             val c = cesium.trim()
                             val o = openai.trim()
@@ -103,8 +105,21 @@ fun KeyDialog(
                             if (c.isNotEmpty()) store.setCesium(c)
                             if (o.isNotEmpty()) store.setOpenAI(o)
                             store.setOnboard(true)
-                            Toast.makeText(ctx, if (g.isNotEmpty()) "Chaves salvas! Reinicie app para Google 3D (OSM já ativo)" else "Chaves salvas!", Toast.LENGTH_LONG).show()
-                            onDismiss()
+                            // Patch runtime imediato: atualiza ApplicationInfo para Google Maps SDK ler sem rebuild
+                            if (g.isNotEmpty() && MapKeyProvider.isValidGoogleKey(g)) {
+                                try {
+                                    val ai = ctx.packageManager.getApplicationInfo(ctx.packageName, PackageManager.GET_META_DATA)
+                                    ai.metaData.putString("com.google.android.geo.API_KEY", g)
+                                    Log.d("GodEye/Keys", "Patched runtime API_KEY ${g.take(8)}… — reiniciando para aplicar")
+                                } catch (e: Exception) { Log.w("GodEye/Keys", "Patch failed", e) }
+                                Toast.makeText(ctx, "Chave salva! Reiniciando para ativar Google 3D…", Toast.LENGTH_LONG).show()
+                                onDismiss()
+                                // Recria activity para MapsInitializer reler a key
+                                (ctx as? android.app.Activity)?.recreate()
+                            } else {
+                                Toast.makeText(ctx, if (g.isNotEmpty()) "Chaves salvas! Reinicie app para Google 3D (OSM já ativo)" else "Chaves salvas!", Toast.LENGTH_LONG).show()
+                                onDismiss()
+                            }
                         } catch (e: Exception) {
                             Toast.makeText(ctx, "Erro ao salvar: ${e.message}", Toast.LENGTH_LONG).show()
                         } finally { saving = false }

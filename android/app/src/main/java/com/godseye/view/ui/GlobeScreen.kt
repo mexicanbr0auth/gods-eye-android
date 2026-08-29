@@ -40,15 +40,15 @@ fun GlobeScreen(vm: GlobeViewModel = viewModel(), onRequestKeys: () -> Unit, dat
     var mapLoaded by remember { mutableStateOf(false) }
 
     val manifestKey = remember { MapKeyProvider.getManifestKey(ctx) }
-    // CORREÇÃO BRANCO: só manifest conta para Google 3D — DataStore sozinho não faz Maps SDK funcionar (limitação SDK), então não troca para Google branco
+    // Agora DataStore patcha ApplicationInfo em runtime (GodEyeApplication + KeyDialog recreate), então DataStore VALE para Google
     val hasManifestGoogleKey = MapKeyProvider.isValidGoogleKey(manifestKey)
-    // Mostra estado salvo mas mantém OSM até rebuild
     val hasGoogleKeyForUi = MapKeyProvider.isValidGoogleKey(dataStoreGoogleKey ?: manifestKey)
+    val hasEffectiveGoogleKey = MapKeyProvider.isValidGoogleKey(dataStoreGoogleKey) || hasManifestGoogleKey
     var googleMapFailed by remember { mutableStateOf(false) }
-    val useGoogleMap = hasManifestGoogleKey && !googleMapFailed
+    val useGoogleMap = hasEffectiveGoogleKey && !googleMapFailed
 
     LaunchedEffect(dataStoreGoogleKey, manifestKey, googleMapFailed) {
-        Log.d("GodEye/Map", "manifestValid=$hasManifestGoogleKey dsValid=${MapKeyProvider.isValidGoogleKey(dataStoreGoogleKey)} useGoogle=$useGoogleMap failed=$googleMapFailed manifest=${manifestKey?.take(8)} ds=${dataStoreGoogleKey?.take(8)}")
+        Log.d("GodEye/Map", "manifestValid=$hasManifestGoogleKey dsValid=${MapKeyProvider.isValidGoogleKey(dataStoreGoogleKey)} effective=$hasEffectiveGoogleKey useGoogle=$useGoogleMap failed=$googleMapFailed manifest=${manifestKey?.take(8)} ds=${dataStoreGoogleKey?.take(8)}")
     }
     // Se Google demorar >5s sem onMapLoaded, fallback para OSM automaticamente (evita branco infinito)
     LaunchedEffect(useGoogleMap) {
