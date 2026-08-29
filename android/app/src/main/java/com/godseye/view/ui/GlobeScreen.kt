@@ -40,10 +40,25 @@ fun GlobeScreen(vm: GlobeViewModel = viewModel(), onRequestKeys: () -> Unit, dat
     var mapLoaded by remember { mutableStateOf(false) }
 
     val manifestKey = remember { MapKeyProvider.getManifestKey(ctx) }
-    val hasGoogleKey = MapKeyProvider.isValidGoogleKey(dataStoreGoogleKey ?: manifestKey)
+    // CORREÇÃO BRANCO: só manifest conta para Google 3D — DataStore sozinho não faz Maps SDK funcionar (limitação SDK), então não troca para Google branco
+    val hasManifestGoogleKey = MapKeyProvider.isValidGoogleKey(manifestKey)
+    // Mostra estado salvo mas mantém OSM até rebuild
+    val hasGoogleKeyForUi = MapKeyProvider.isValidGoogleKey(dataStoreGoogleKey ?: manifestKey)
+    var googleMapFailed by remember { mutableStateOf(false) }
+    val useGoogleMap = hasManifestGoogleKey && !googleMapFailed
 
-    LaunchedEffect(dataStoreGoogleKey, manifestKey) {
-        Log.d("GodEye/Map", "hasGoogleKey=$hasGoogleKey manifest=${manifestKey?.take(8)} ds=${dataStoreGoogleKey?.take(8)}")
+    LaunchedEffect(dataStoreGoogleKey, manifestKey, googleMapFailed) {
+        Log.d("GodEye/Map", "manifestValid=$hasManifestGoogleKey dsValid=${MapKeyProvider.isValidGoogleKey(dataStoreGoogleKey)} useGoogle=$useGoogleMap failed=$googleMapFailed manifest=${manifestKey?.take(8)} ds=${dataStoreGoogleKey?.take(8)}")
+    }
+    // Se Google demorar >5s sem onMapLoaded, fallback para OSM automaticamente (evita branco infinito)
+    LaunchedEffect(useGoogleMap) {
+        if (useGoogleMap) {
+            kotlinx.coroutines.delay(6000)
+            if (!mapLoaded) {
+                Log.w("GodEye/Map", "GoogleMap timeout — fallback OSM")
+                googleMapFailed = true
+            }
+        }
     }
     LaunchedEffect(camera) {
         try {
@@ -96,9 +111,8 @@ fun GlobeScreen(vm: GlobeViewModel = viewModel(), onRequestKeys: () -> Unit, dat
     ) { pad ->
         Box(Modifier.padding(pad).fillMaxSize().background(Color(0xFF060A14))) {
 
-            // CRÍTICO: Google Maps com key inválida fica BRANCO mesmo com TileOverlay — por isso usamos OSM nativo (Osmdroid) quando não tem key
-            // Isso garante mapa sempre visível, sem depender de Google Play Services nem API key
-            if (hasGoogleKey) {
+            // CRÍTICO: Google Maps com key inválida/dummy fica BRANCO mesmo com TileOverlay — OSM (Osmdroid) é base garantida sem Play Services
+            if (useGoogleMap) {
                 val mapProps = MapProperties(
                     mapType = if (style==4) MapType.NORMAL else MapType.HYBRID,
                     isBuildingEnabled = true,
@@ -109,7 +123,7 @@ fun GlobeScreen(vm: GlobeViewModel = viewModel(), onRequestKeys: () -> Unit, dat
                     modifier = Modifier.fillMaxSize(),
                     cameraPositionState = camPosState,
                     properties = mapProps, uiSettings = mapUi,
-                    onMapLoaded = { mapLoaded = true; Log.d("GodEye/Map", "GoogleMap loaded") },
+                    onMapLoaded = { mapLoaded = true; Log.d("GodEye/Map", "GoogleMap loaded OK") },
                     onMapLongClick = { latLng -> vm.flyTo(latLng, 14f) }
                 ) {
                     if (layers.contains(LayerId.FLIGHTS)) {
@@ -146,25 +160,41 @@ fun GlobeScreen(vm: GlobeViewModel = viewModel(), onRequestKeys: () -> Unit, dat
                 )
             }
 
-            if (!hasGoogleKey) {
+            // Banner inteligente: explica branco e mostra ação certa
+            if (!hasManifestGoogleKey) {
                 Card(
                     Modifier.align(Alignment.TopCenter).padding(12.dp).fillMaxWidth(),
-                    colors = CardDefaults.cardColors(containerColor = Color(0xFFB71C1C))
+                    colors = CardDefaults.cardColors(containerColor = if (hasGoogleKeyForUi) Color(0xFF2E7D32) else Color(0xFFB71C1C))
                 ) {
                     Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
-                        Text("OSM ativo — sem Google API Key", color = Color.White, fontSize = 12.sp)
-                        Text("Para Google 3D Photorealistic (igual web), configure GOOGLE_MAPS_API_KEY e recompile. OSM já mostra mapa, voos e terremotos sem travar em branco.", color = Color(0xFFFFCDD2), fontSize = 10.sp)
-                        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                            Button(onClick = onRequestKeys, colors = ButtonDefaults.buttonColors(containerColor = Color.White, contentColor = Color(0xFFB71C1C))) { Text("Configurar chave", fontSize = 11.sp) }
-                            if (!mapLoaded) Text("OSM carregando…", color = Color.White, fontSize = 10.sp, modifier = Modifier.align(Alignment.CenterVertically))
+                        if (hasGoogleKeyForUi && !hasManifestGoogleKey) {
+                            Text("Chave salva (DataStore) — OSM ativo até rebuild", color = Color.White, fontSize = 12.sp)
+                            Text("Você salvou GOOGLE key, ela está persistida. Mas Google Maps SDK só lê do AndroidManifest no BUILD — precisa recompilar com secret para 3D. OSM já funciona 100% sem ficar branco.", color = Color(0xFFC8E6C9), fontSize = 10.sp)
+                        } else {
+                            Text("OSM ativo — sem Google API Key no build", color = Color.White, fontSize = 12.sp)
+                            Text("Google 3D Photorealistic precisa de GOOGLE_MAPS_API_KEY no BUILD (secret Actions). Sem isso Google fica BRANCO — por isso usamos OSM nativo garantido.", color = Color(0xFFFFCDD2), fontSize = 10.sp)
                         }
+                        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                            Button(onClick = onRequestKeys, colors = ButtonDefaults.buttonColors(containerColor = Color.White, contentColor = if (hasGoogleKeyForUi) Color(0xFF2E7D32) else Color(0xFFB71C1C))) { Text(if (hasGoogleKeyForUi) "Trocar chave" else "Configurar chave", fontSize = 11.sp) }
+                            Text(if (mapLoaded || !useGoogleMap) "OSM OK" else "OSM carregando…", color = Color.White, fontSize = 10.sp, modifier = Modifier.align(Alignment.CenterVertically))
+                        }
+                    }
+                }
+            } else if (googleMapFailed) {
+                Card(
+                    Modifier.align(Alignment.TopCenter).padding(12.dp).fillMaxWidth(),
+                    colors = CardDefaults.cardColors(containerColor = Color(0xFFEF6C00))
+                ) {
+                    Column(Modifier.padding(12.dp)) {
+                        Text("Google Maps falhou — fallback OSM", color = Color.White, fontSize = 12.sp)
+                        Text("Key existe mas Google não carregou (Play Services / billing / pacote SHA). Usando OSM.", color = Color.White, fontSize = 10.sp)
                     }
                 }
             }
 
-            Column(Modifier.align(Alignment.TopStart).padding(top = if (!hasGoogleKey) 140.dp else 12.dp).padding(start = 12.dp).background(Color(0xAA060A14)).padding(8.dp)) {
+            Column(Modifier.align(Alignment.TopStart).padding(top = if (!hasManifestGoogleKey || googleMapFailed) 140.dp else 12.dp).padding(start = 12.dp).background(Color(0xAA060A14)).padding(8.dp)) {
                 Text("ACTIVE STYLE: ${listOf("NORMAL","CRT","NVG","FLIR","NOIR","SNOW","TACTICAL")[style]}", color = Color(0xFF00E5FF), fontSize = 10.sp)
-                Text("FLIGHTS ${flights.size}  QUAKES ${quakes.size}  ${if (hasGoogleKey) "GOOGLE 3D" else "OSM"}", color = Color.White, fontSize = 9.sp)
+                Text("FLIGHTS ${flights.size}  QUAKES ${quakes.size}  ${if (useGoogleMap) "GOOGLE 3D" else "OSM"}${if (googleMapFailed) " (FALLBACK)" else ""}", color = Color.White, fontSize = 9.sp)
                 Text("NO PLACE LEFT BEHIND", color = Color(0x66FFFFFF), fontSize = 8.sp, letterSpacing = 2.sp)
             }
         }
