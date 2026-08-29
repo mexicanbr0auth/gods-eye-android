@@ -31,5 +31,15 @@ interface GodEyeApi {
     @POST("https://overpass-api.de/api/interpreter")
     suspend fun overpass(@Body body: String): Response<String>
 
+    // Radio Browser — src/data/radio.js: https://all.api.radio-browser.info/json/stations
+    @GET("https://de1.api.radio-browser.info/json/stations/bycountry/{country}")
+    suspend fun getRadioByCountry(@Path("country") country: String): Response<List<Map<String, Any>>>
+    @GET("https://de1.api.radio-browser.info/json/stations/search")
+    suspend fun searchRadio(@Query("limit") limit: Int = 200, @Query("hidebroken") hide: Boolean = true): Response<List<Map<String, Any>>>
+
+    // Bikeshare GBFS — src/data/bikeshare.js
+    @GET("https://api.citybik.es/v2/networks")
+    suspend fun getBikeshareNetworks(): Response<Map<String, Any>>
+
     // AISStream é WebSocket — tratado em VesselRepository via OkHttp WS (src/data/aisLiveVessels.js / aisStreamAdapter.js)
 }

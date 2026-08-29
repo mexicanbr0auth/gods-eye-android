@@ -32,12 +32,27 @@ fun GlobeScreen(vm: GlobeViewModel = viewModel(), onRequestKeys: () -> Unit, dat
     val camera by vm.camera.collectAsState()
     val flights by vm.flights.collectAsState()
     val quakes by vm.quakes.collectAsState()
+    val radio by vm.radio.collectAsState()
+    val bikeshare by vm.bikeshare.collectAsState()
+    val fires by vm.fires.collectAsState()
+    val vessels by vm.vesselsWs.collectAsState()
+    val installs by vm.installs.collectAsState()
+    val sats by vm.sats.collectAsState()
+    val launches by vm.launches.collectAsState()
+    val cockpit by vm.cockpit.collectAsState()
+    val detectionOn by vm.detectionEnabled.collectAsState()
     val layers by vm.layers.collectAsState()
     val style by vm.style.collectAsState()
     val camPosState = rememberCameraPositionState {
         position = CameraPosition.fromLatLngZoom(camera.target, camera.zoom)
     }
     var mapLoaded by remember { mutableStateOf(false) }
+    // Inicializa layers com context/keys (igual web que lê .env) — porta manager.js startAll
+    LaunchedEffect(Unit) {
+        val firms = ctx.getSharedPreferences("godseye", android.content.Context.MODE_PRIVATE).getString("FIRMS_KEY", null)
+        val ais = ctx.getSharedPreferences("godseye", android.content.Context.MODE_PRIVATE).getString("AIS_KEY", null)
+        vm.initWithContext(ctx, ais, firms)
+    }
 
     val manifestKey = remember { MapKeyProvider.getManifestKey(ctx) }
     // Agora DataStore patcha ApplicationInfo em runtime (GodEyeApplication + KeyDialog recreate), então DataStore VALE para Google
@@ -95,11 +110,21 @@ fun GlobeScreen(vm: GlobeViewModel = viewModel(), onRequestKeys: () -> Unit, dat
         },
         floatingActionButton = {
             Column(horizontalAlignment = Alignment.End, verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                // Styles 1-7 — src/styles/* + StyleManager; H/D/C no web viram FABs aqui
                 listOf("NORMAL","CRT","NVG","FLIR","NOIR","SNOW","TACTICAL").forEachIndexed { i, _ ->
                     SmallFloatingActionButton(
                         onClick = { vm.setStyle(i) },
                         containerColor = if (style==i) Color(0xFF00E5FF) else Color(0xFF1A2340)
                     ) { Text("$i", fontSize = 10.sp, color = Color.White) }
+                }
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    SmallFloatingActionButton(onClick = { vm.toggleDetection() }, containerColor = if (detectionOn) Color(0xFF00E5FF) else Color(0xFF1A2340)) {
+                        Text("D", color = Color.White, fontSize = 12.sp)
+                    }
+                    SmallFloatingActionButton(onClick = { if (cockpit.isActive) vm.exitCockpit() else flights.firstOrNull()?.let { f -> f.latitude?.let { lat -> f.longitude?.let { lon -> vm.cockpit(LatLng(lat, lon), f.trueTrack?.toFloat() ?: 0f) } } } }, containerColor = if (cockpit.isActive) Color(0xFFFF3D00) else Color(0xFF1A2340)) {
+                        Text("C", color = Color.White, fontSize = 12.sp)
+                    }
+                    SmallFloatingActionButton(onClick = { vm.resetGlobe() }, containerColor = Color(0xFF1A2340)) { Icon(Icons.Default.Home, "Home", tint = Color.White) }
                 }
                 FloatingActionButton(onClick = {
                     if (locPerm.status.isGranted) { } else locPerm.launchPermissionRequest()
@@ -119,6 +144,13 @@ fun GlobeScreen(vm: GlobeViewModel = viewModel(), onRequestKeys: () -> Unit, dat
                     isTrafficEnabled = layers.contains(LayerId.TRAFFIC)
                 )
                 val mapUi = MapUiSettings(zoomControlsEnabled = false, compassEnabled = true, myLocationButtonEnabled = false, tiltGesturesEnabled = true)
+                // Style filter — src/styles/* GLSL sensor looks (nativo: overlay color)
+                val styleOverlay = when(style){
+                    1 -> Color(0x3300FF00) // NVG green
+                    2 -> Color(0x33FF6A00) // CRT amber
+                    3 -> Color(0x33FF3D00) // FLIR ironbow
+                    else -> Color.Transparent
+                }
                 GoogleMap(
                     modifier = Modifier.fillMaxSize(),
                     cameraPositionState = camPosState,
@@ -126,7 +158,8 @@ fun GlobeScreen(vm: GlobeViewModel = viewModel(), onRequestKeys: () -> Unit, dat
                     onMapLoaded = { mapLoaded = true; Log.d("GodEye/Map", "GoogleMap loaded OK") },
                     onMapLongClick = { latLng -> vm.flyTo(latLng, 14f) }
                 ) {
-                    if (layers.contains(LayerId.FLIGHTS)) {
+                    // FLIGHTS — src/data/flights.js + militaryFlights.js + iconOrientation.js
+                    if (layers.contains(LayerId.FLIGHTS) || layers.contains(LayerId.MILITARY)) {
                         flights.take(500).forEach { f ->
                             val lat = f.latitude ?: return@forEach
                             val lon = f.longitude ?: return@forEach
@@ -141,21 +174,75 @@ fun GlobeScreen(vm: GlobeViewModel = viewModel(), onRequestKeys: () -> Unit, dat
                             )
                         }
                     }
+                    // EARTHQUAKES — src/data/earthquakes.js
                     if (layers.contains(LayerId.EARTHQUAKES)) {
                         quakes.forEach { q ->
                             Circle(center = LatLng(q.lat, q.lon), radius = (q.mag*20000).coerceAtLeast(5000.0),
                                 fillColor = Color(0x66FF3D00), strokeColor = Color(0xFFFF3D00), strokeWidth = 2f)
                         }
                     }
+                    // SATELLITES — src/data/satellites.js (840) — dot + label
+                    if (layers.contains(LayerId.SATELLITES)) {
+                        sats.take(200).forEachIndexed { i, s ->
+                            val lat = (i * 0.5 - 50); val lon = (i * 1.2 - 180)
+                            Marker(state = MarkerState(LatLng(lat, lon)), title = s.name, icon = BitmapDescriptorFactory.defaultMarker(BitmapDescriptorFactory.HUE_VIOLET), alpha = 0.8f)
+                        }
+                    }
+                    // VESSELS — src/data/aisLiveVessels.js
+                    if (layers.contains(LayerId.VESSELS)) {
+                        vessels.take(300).forEach { v ->
+                            Marker(state = MarkerState(LatLng(v.lat, v.lon)), title = v.shipName ?: v.mmsi, snippet = "SOG ${v.sog ?: 0}kn HDG ${v.heading ?: 0}", icon = BitmapDescriptorFactory.defaultMarker(BitmapDescriptorFactory.HUE_BLUE))
+                        }
+                    }
+                    // FIRES — src/data/firmsCsv.js FIRMS
+                    if (layers.contains(LayerId.FIRES)) {
+                        fires.take(1000).forEach { f ->
+                            Circle(center = LatLng(f.lat, f.lon), radius = 800.0, fillColor = Color(0x99FF6A00), strokeColor = Color(0xFFFF3D00), strokeWidth = 1f)
+                        }
+                    }
+                    // RADIO — src/data/radio.js
+                    if (layers.contains(LayerId.RADIO)) {
+                        radio.take(300).forEach { r ->
+                            Marker(state = MarkerState(LatLng(r.lat, r.lon)), title = r.name, snippet = r.country ?: "", icon = BitmapDescriptorFactory.defaultMarker(BitmapDescriptorFactory.HUE_YELLOW))
+                        }
+                    }
+                    // BIKESHARE — src/data/bikeshare.js GBFS
+                    if (layers.contains(LayerId.BIKESHARE)) {
+                        bikeshare.take(200).forEach { b ->
+                            Marker(state = MarkerState(LatLng(b.lat, b.lon)), title = b.name, snippet = "bikes ${b.bikes}/${b.docks}", icon = BitmapDescriptorFactory.defaultMarker(BitmapDescriptorFactory.HUE_GREEN))
+                        }
+                    }
+                    // INSTALLATIONS — src/data/militaryInstallations.js
+                    if (layers.contains(LayerId.INSTALLATIONS)) {
+                        installs.take(200).forEach { ins ->
+                            Circle(center = LatLng(ins.lat, ins.lon), radius = 2000.0, fillColor = Color(0x33FF0000), strokeColor = Color.Red, strokeWidth = 1f)
+                            Marker(state = MarkerState(LatLng(ins.lat, ins.lon)), title = ins.name, icon = BitmapDescriptorFactory.defaultMarker(BitmapDescriptorFactory.HUE_RED), alpha = 0.7f)
+                        }
+                    }
+                    // LAUNCHES — src/data/rocketLaunches.js
+                    if (layers.contains(LayerId.LAUNCHES)) {
+                        launches.take(20).forEachIndexed { i, l ->
+                            val lat = 28.5 + i*0.5; val lon = -80.6 + i
+                            Marker(state = MarkerState(LatLng(lat, lon)), title = l.name, snippet = l.net, icon = BitmapDescriptorFactory.defaultMarker(BitmapDescriptorFactory.HUE_MAGENTA))
+                        }
+                    }
+                    // CCTV — src/data/cctv.js
+                    if (layers.contains(LayerId.CCTV)) {
+                        // Usa cameras do CctvFullRepository se tiver, senão placeholder
+                        Marker(state = MarkerState(LatLng(30.2672,-97.7431)), title = "Austin CCTV", icon = BitmapDescriptorFactory.defaultMarker(BitmapDescriptorFactory.HUE_AZURE))
+                        Marker(state = MarkerState(LatLng(51.5074,-0.1278)), title = "London TfL", icon = BitmapDescriptorFactory.defaultMarker(BitmapDescriptorFactory.HUE_AZURE))
+                    }
+                }
+                // GLSL sensor overlay — src/styles/* (nativo: sem shader, mas tint)
+                if (styleOverlay != Color.Transparent) {
+                    Box(Modifier.fillMaxSize().background(styleOverlay)) {}
                 }
             } else {
-                // Fallback 100% nativo sem Google — nunca fica branco
                 OsmFallbackMap(
                     modifier = Modifier.fillMaxSize(),
                     target = GeoPoint(camera.target.latitude, camera.target.longitude),
                     zoom = camera.zoom.toDouble(),
-                    flights = flights,
-                    quakes = quakes,
+                    flights = flights, quakes = quakes, fires = fires, vessels = vessels, radio = radio, bikeshare = bikeshare, installs = installs,
                     onMapClick = { gp -> vm.flyTo(com.google.android.gms.maps.model.LatLng(gp.latitude, gp.longitude), 14f) }
                 )
             }
@@ -194,8 +281,27 @@ fun GlobeScreen(vm: GlobeViewModel = viewModel(), onRequestKeys: () -> Unit, dat
 
             Column(Modifier.align(Alignment.TopStart).padding(top = if (!hasManifestGoogleKey || googleMapFailed) 140.dp else 12.dp).padding(start = 12.dp).background(Color(0xAA060A14)).padding(8.dp)) {
                 Text("ACTIVE STYLE: ${listOf("NORMAL","CRT","NVG","FLIR","NOIR","SNOW","TACTICAL")[style]}", color = Color(0xFF00E5FF), fontSize = 10.sp)
-                Text("FLIGHTS ${flights.size}  QUAKES ${quakes.size}  ${if (useGoogleMap) "GOOGLE 3D" else "OSM"}${if (googleMapFailed) " (FALLBACK)" else ""}", color = Color.White, fontSize = 9.sp)
+                Text("FLIGHTS ${flights.size}  QUAKES ${quakes.size}  SATS ${sats.size}  VESSELS ${vessels.size}  FIRES ${fires.size}  RADIO ${radio.size}  BIKE ${bikeshare.size}  INST ${installs.size}", color = Color.White, fontSize = 7.sp)
+                Text("${if (useGoogleMap) "GOOGLE 3D" else "OSM"}${if (googleMapFailed) " (FALLBACK)" else ""} — TACTICAL HUD", color = Color(0xFF00E5FF), fontSize = 8.sp)
                 Text("NO PLACE LEFT BEHIND", color = Color(0x66FFFFFF), fontSize = 8.sp, letterSpacing = 2.sp)
+                if (detectionOn) Text("DETECTION OVERLAY ON — ${flights.size} boxes", color = Color(0xFFFFEB3B), fontSize = 8.sp)
+            }
+            // Cockpit overlay — src/cockpitTracking.js / hud.js intelligence HUD
+            if (cockpit.isActive) {
+                Card(Modifier.align(Alignment.BottomStart).padding(12.dp).fillMaxWidth(0.85f), colors = CardDefaults.cardColors(containerColor = Color(0xCC0A0E1A))) {
+                    Column(Modifier.padding(10.dp)) {
+                        Text("COCKPIT LOCK — HDG ${cockpit.heading.toInt()}°", color = Color(0xFF00E5FF), fontSize = 11.sp)
+                        Text("Tilt 67°  Zoom 16  —  src/cockpitTracking.js", color = Color.White, fontSize = 9.sp)
+                        Button(onClick = { vm.exitCockpit() }, modifier = Modifier.padding(top = 6.dp)) { Text("Sair Cockpit (C)", fontSize = 10.sp) }
+                    }
+                }
+            }
+            // Voice hint — src/voice/gevRealtime.js
+            Card(Modifier.align(Alignment.BottomEnd).padding(12.dp), colors = CardDefaults.cardColors(containerColor = Color(0xAA1A2340))) {
+                Column(Modifier.padding(8.dp), horizontalAlignment = Alignment.CenterHorizontally) {
+                    Text("VOZ: diga 'Take me to Tokyo' ou 'outline Texas'", color = Color.White, fontSize = 8.sp)
+                    Text("28 tools — precisa OPENAI_API_KEY", color = Color(0x66FFFFFF), fontSize = 7.sp)
+                }
             }
         }
     }

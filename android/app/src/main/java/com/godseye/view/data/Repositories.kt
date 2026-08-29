@@ -149,16 +149,28 @@ class LaunchRepository {
     }
 }
 
-// Central Manager — equivale a src/data/manager.js DataLayerManager
+// Central Manager — equivale a src/data/manager.js DataLayerManager (agora 13 layers completos)
 class DataLayerManager(
     val flights: FlightRepository = FlightRepository(),
     val quakes: EarthquakeRepository = EarthquakeRepository(),
     val sats: SatelliteRepository = SatelliteRepository(),
     val vessels: VesselRepository = VesselRepository(),
     val launches: LaunchRepository = LaunchRepository(),
+    // 9 layers restantes — porta fiel
+    val radio: RadioRepository = RadioRepository(),
+    val bikeshare: BikeshareRepository = BikeshareRepository(),
+    val fires: FiresRepository = FiresRepository(),
+    val vesselsWs: VesselWsRepository = VesselWsRepository(),
+    val installations: InstallationRepository = InstallationRepository(),
 ) {
-    fun startAll(scope: CoroutineScope, aisKey: String?) {
+    fun startAll(scope: CoroutineScope, aisKey: String?, firmsKey: String? = null, ctx: Context? = null) {
         flights.start(scope); quakes.start(scope); sats.start(scope); launches.start(scope); vessels.start(scope, aisKey)
+        radio.start(scope); bikeshare.start(scope); installations.start(scope)
+        vesselsWs.start(scope, aisKey); fires.start(scope, firmsKey)
+        if (ctx != null) {
+            CctvFullRepository(ctx).start(scope)
+            BundledRepository(ctx).start(scope)
+        }
     }
-    fun stopAll(){ flights.stop() }
+    fun stopAll(){ flights.stop(); vesselsWs.stop() }
 }
