@@ -1,6 +1,7 @@
 package com.godseye.view
 
 import android.os.Bundle
+import android.widget.Toast
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.compose.foundation.layout.*
@@ -16,10 +17,6 @@ import com.godseye.view.ui.GlobeViewModel
 import com.godseye.view.ui.theme.GodEyeTheme
 import kotlinx.coroutines.launch
 
-// Nativo — não usa mais WebView. Cada módulo web foi portado para Kotlin:
-// main.js -> setContent + GlobeScreen, hud.js -> HUD Compose, camera.js -> CameraController,
-// data/*.js -> Repositories.kt, voice/gevRealtime.js -> voice/VoiceAgent.kt (stub)
-
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -28,47 +25,92 @@ class MainActivity : ComponentActivity() {
                 val ctx = LocalContext.current
                 val app = ctx.applicationContext as GodEyeApplication
                 var showKeys by remember { mutableStateOf(false) }
-                // ViewModel nativo
                 val vm: GlobeViewModel = viewModel()
 
+                // Observa DataStore — agora persiste e reflete imediatamente
+                val savedGoogle by app.dataStore.googleMapsKey.collectAsState(initial = null)
+                val savedCesium by app.dataStore.cesiumToken.collectAsState(initial = null)
+                val savedOpenAI by app.dataStore.openAIKey.collectAsState(initial = null)
+
                 Surface(Modifier.fillMaxSize(), color = MaterialTheme.colorScheme.background) {
-                    GlobeScreen(vm = vm, onRequestKeys = { showKeys = true })
+                    GlobeScreen(
+                        vm = vm,
+                        onRequestKeys = { showKeys = true },
+                        dataStoreGoogleKey = savedGoogle
+                    )
                 }
 
-                if (showKeys) KeyDialog(app.dataStore, onDismiss = { showKeys = false })
+                if (showKeys) KeyDialog(
+                    store = app.dataStore,
+                    initialGoogle = savedGoogle ?: "",
+                    initialCesium = savedCesium ?: "",
+                    initialOpenAI = savedOpenAI ?: "",
+                    onDismiss = { showKeys = false }
+                )
             }
         }
     }
 }
 
 @Composable
-fun KeyDialog(store: AppDataStore, onDismiss: () -> Unit) {
-    var google by remember { mutableStateOf("") }
-    var cesium by remember { mutableStateOf("") }
-    var openai by remember { mutableStateOf("") }
+fun KeyDialog(
+    store: AppDataStore,
+    initialGoogle: String,
+    initialCesium: String,
+    initialOpenAI: String,
+    onDismiss: () -> Unit
+) {
+    var google by remember(initialGoogle) { mutableStateOf(initialGoogle) }
+    var cesium by remember(initialCesium) { mutableStateOf(initialCesium) }
+    var openai by remember(initialOpenAI) { mutableStateOf(initialOpenAI) }
+    var saving by remember { mutableStateOf(false) }
     val scope = rememberCoroutineScope()
+    val ctx = LocalContext.current
+
+    // Atualiza quando DataStore muda (ex: após salvar)
+    LaunchedEffect(initialGoogle, initialCesium, initialOpenAI) {
+        google = initialGoogle
+        cesium = initialCesium
+        openai = initialOpenAI
+    }
+
     AlertDialog(
         onDismissRequest = onDismiss,
         title = { Text("Configurar chaves") },
         text = {
             Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                Text("GOOGLE_MAPS_API_KEY (obrigatória para 3D) — equivale a .env web", style = MaterialTheme.typography.bodySmall)
-                OutlinedTextField(google, { google = it }, label = { Text("Google Maps API Key") }, singleLine = true)
-                OutlinedTextField(cesium, { cesium = it }, label = { Text("CESIUM_ION_TOKEN (opcional Bing)") }, singleLine = true)
-                OutlinedTextField(openai, { openai = it }, label = { Text("OPENAI_API_KEY (voz)") }, singleLine = true)
-                Text("As chaves ficam em DataStore (nativo) — igual localStorage no web. Sem rebuild.", style = MaterialTheme.typography.labelSmall)
+                Text("GOOGLE_MAPS_API_KEY — salva em DataStore (persiste). Para Google 3D precisa rebuild com secret; OSM funciona na hora.", style = MaterialTheme.typography.bodySmall)
+                OutlinedTextField(google, { google = it }, label = { Text("Google Maps API Key") }, singleLine = true, modifier = Modifier.fillMaxWidth())
+                if (google.isNotBlank() && !google.startsWith("AIza")) Text("⚠️ Normalmente começa com AIza… confira no Google Cloud", color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.labelSmall)
+                OutlinedTextField(cesium, { cesium = it }, label = { Text("CESIUM_ION_TOKEN (opcional)") }, singleLine = true, modifier = Modifier.fillMaxWidth())
+                OutlinedTextField(openai, { openai = it }, label = { Text("OPENAI_API_KEY (voz)") }, singleLine = true, modifier = Modifier.fillMaxWidth())
+                Text("Persistência: DataStore prefs (equiv. localStorage web). Salvar fecha e já atualiza banner do mapa.", style = MaterialTheme.typography.labelSmall)
+                if (saving) LinearProgressIndicator(Modifier.fillMaxWidth())
             }
         },
         confirmButton = {
-            Button(onClick = {
-                scope.launch {
-                    if (google.isNotBlank()) store.setGoogleKey(google)
-                    if (cesium.isNotBlank()) store.setCesium(cesium)
-                    if (openai.isNotBlank()) store.setOpenAI(openai)
-                    store.setOnboard(true)
-                    onDismiss()
+            Button(
+                enabled = !saving,
+                onClick = {
+                    saving = true
+                    scope.launch {
+                        try {
+                            // Salva TRIMMED — bug anterior salvava com espaços
+                            val g = google.trim()
+                            val c = cesium.trim()
+                            val o = openai.trim()
+                            if (g.isNotEmpty()) store.setGoogleKey(g) else if (google.isEmpty() && initialGoogle.isNotEmpty()) store.clearGoogleKey()
+                            if (c.isNotEmpty()) store.setCesium(c)
+                            if (o.isNotEmpty()) store.setOpenAI(o)
+                            store.setOnboard(true)
+                            Toast.makeText(ctx, if (g.isNotEmpty()) "Chaves salvas! Reinicie app para Google 3D (OSM já ativo)" else "Chaves salvas!", Toast.LENGTH_LONG).show()
+                            onDismiss()
+                        } catch (e: Exception) {
+                            Toast.makeText(ctx, "Erro ao salvar: ${e.message}", Toast.LENGTH_LONG).show()
+                        } finally { saving = false }
+                    }
                 }
-            }) { Text("Salvar") }
+            ) { Text(if (saving) "Salvando…" else "Salvar") }
         },
         dismissButton = { TextButton(onClick = onDismiss) { Text("Fechar") } }
     )

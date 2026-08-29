@@ -1,6 +1,7 @@
 package com.godseye.view.ui
 
 import android.Manifest
+import android.util.Log
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyRow
@@ -12,6 +13,7 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.lifecycle.viewmodel.compose.viewModel
@@ -20,13 +22,20 @@ import com.google.android.gms.maps.CameraUpdateFactory
 import com.google.android.gms.maps.model.*
 import com.google.maps.android.compose.*
 import com.godseye.view.data.LayerId
+import com.godseye.view.data.MapKeyProvider
+import java.net.URL
 
-// Porta nativa de index.html + src/ui.js + src/hud.js + style.css
-// No web: Cesium Viewer + #cesiumContainer; no nativo: GoogleMap Compose com buildings 3D + tilt
+// TileProvider OSM — garante mapa visível sem Google key (fallback nativo do OSM do web)
+class OsmTileProvider : UrlTileProvider(256, 256) {
+    override fun getTileUrl(x: Int, y: Int, zoom: Int): URL? {
+        return try { URL("https://tile.openstreetmap.org/$zoom/$x/$y.png") } catch (_: Exception) { null }
+    }
+}
 
 @OptIn(ExperimentalPermissionsApi::class, ExperimentalMaterial3Api::class)
 @Composable
-fun GlobeScreen(vm: GlobeViewModel = viewModel(), onRequestKeys: () -> Unit) {
+fun GlobeScreen(vm: GlobeViewModel = viewModel(), onRequestKeys: () -> Unit, dataStoreGoogleKey: String? = null) {
+    val ctx = LocalContext.current
     val camera by vm.camera.collectAsState()
     val flights by vm.flights.collectAsState()
     val quakes by vm.quakes.collectAsState()
@@ -35,10 +44,23 @@ fun GlobeScreen(vm: GlobeViewModel = viewModel(), onRequestKeys: () -> Unit) {
     val camPosState = rememberCameraPositionState {
         position = CameraPosition.fromLatLngZoom(camera.target, camera.zoom)
     }
+    var mapLoaded by remember { mutableStateOf(false) }
+    var mapError by remember { mutableStateOf<String?>(null) }
+
+    // Detecta se Google key é válida (BuildConfig/manifest ou DataStore runtime)
+    val manifestKey = remember { MapKeyProvider.getManifestKey(ctx) }
+    val hasGoogleKey = MapKeyProvider.isValidGoogleKey(dataStoreGoogleKey ?: manifestKey)
+    // Log para debug igual vite proxy logs
+    LaunchedEffect(dataStoreGoogleKey, manifestKey) {
+        Log.d("GodEye/Map", "hasGoogleKey=$hasGoogleKey manifest=${manifestKey?.take(8)}… ds=${dataStoreGoogleKey?.take(8)}…")
+    }
+
     LaunchedEffect(camera) {
-        camPosState.animate(CameraUpdateFactory.newCameraPosition(
-            CameraPosition(camera.target, camera.zoom, camera.tilt, camera.bearing)
-        ), 1200)
+        try {
+            camPosState.animate(CameraUpdateFactory.newCameraPosition(
+                CameraPosition(camera.target, camera.zoom, camera.tilt, camera.bearing)
+            ), 1200)
+        } catch (e: Exception) { Log.w("GodEye/Camera", "animate failed", e) }
     }
 
     val locPerm = rememberPermissionState(Manifest.permission.ACCESS_FINE_LOCATION)
@@ -55,7 +77,6 @@ fun GlobeScreen(vm: GlobeViewModel = viewModel(), onRequestKeys: () -> Unit) {
             )
         },
         bottomBar = {
-            // Layer chips — espelha src/ui.js panels + src/data/layerState.js
             LazyRow(Modifier.background(Color(0xCC060A14)).padding(8.dp).fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 items(LayerId.entries) { id ->
                     val on = layers.contains(id)
@@ -69,45 +90,57 @@ fun GlobeScreen(vm: GlobeViewModel = viewModel(), onRequestKeys: () -> Unit) {
         },
         floatingActionButton = {
             Column(horizontalAlignment = Alignment.End, verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                // Style 1-7 — src/styles/* + StyleManager (H/D/C shortcuts no web viram FABs)
-                listOf("NORMAL","CRT","NVG","FLIR","NOIR","SNOW","TACTICAL").forEachIndexed { i, name ->
+                listOf("NORMAL","CRT","NVG","FLIR","NOIR","SNOW","TACTICAL").forEachIndexed { i, _ ->
                     SmallFloatingActionButton(
                         onClick = { vm.setStyle(i) },
                         containerColor = if (style==i) Color(0xFF00E5FF) else Color(0xFF1A2340)
                     ) { Text("$i", fontSize = 10.sp, color = Color.White) }
                 }
                 FloatingActionButton(onClick = {
-                    if (locPerm.status.isGranted) {
-                        // cockpitTracking.js — centra no usuário
-                    } else locPerm.launchPermissionRequest()
+                    if (locPerm.status.isGranted) { /* TODO: center on user */ } else locPerm.launchPermissionRequest()
                 }, containerColor = Color(0xFF00E5FF)) {
                     Icon(Icons.Default.MyLocation, "Location")
                 }
             }
         }
     ) { pad ->
-        Box(Modifier.padding(pad).fillMaxSize()) {
-            val mapProps = MapProperties(
-                mapType = when(style){
-                    4 -> MapType.NORMAL // Noir via style
-                    else -> MapType.HYBRID // Photorealistic mais próximo do Google 3D Tiles web
-                },
-                isBuildingEnabled = true, // 3D buildings — equivale a Google Photorealistic 3D Tiles no web
-                isTrafficEnabled = layers.contains(LayerId.TRAFFIC)
-            )
+        Box(Modifier.padding(pad).fillMaxSize().background(Color(0xFF060A14))) {
+
+            // CRÍTICO: se não tem Google key, NÃO usa HYBRID (fica branco) — usa NONE + OSM TileOverlay
+            // Isso é o fallback OSM do web (src/mapStackController.js)
+            val mapProps = if (hasGoogleKey) {
+                MapProperties(
+                    mapType = if (style==4) MapType.NORMAL else MapType.HYBRID,
+                    isBuildingEnabled = true,
+                    isTrafficEnabled = layers.contains(LayerId.TRAFFIC)
+                )
+            } else {
+                MapProperties(mapType = MapType.NONE, isBuildingEnabled = false)
+            }
             val mapUi = MapUiSettings(zoomControlsEnabled = false, compassEnabled = true, myLocationButtonEnabled = false, tiltGesturesEnabled = true)
 
             GoogleMap(
                 modifier = Modifier.fillMaxSize(),
                 cameraPositionState = camPosState,
                 properties = mapProps, uiSettings = mapUi,
-                onMapClick = { /* src/worldFocus.js */ },
+                onMapLoaded = { mapLoaded = true; Log.d("GodEye/Map", "onMapLoaded hasGoogleKey=$hasGoogleKey") },
+                onMapClick = { },
                 onMapLongClick = { latLng -> vm.flyTo(latLng, 14f) }
             ) {
-                // Flights — src/data/flights.js + iconOrientation.js (heading real)
+                // Fallback OSM — só quando não tem Google key, garante que NUNCA fica branco
+                if (!hasGoogleKey) {
+                    TileOverlay(
+                        state = rememberTileOverlayState(),
+                        tileProvider = OsmTileProvider(),
+                        transparency = 0f, visible = true
+                    )
+                }
+
                 if (layers.contains(LayerId.FLIGHTS)) {
                     flights.take(500).forEach { f ->
-                        val pos = LatLng(f.latitude!!, f.longitude!!)
+                        val lat = f.latitude ?: return@forEach
+                        val lon = f.longitude ?: return@forEach
+                        val pos = LatLng(lat, lon)
                         Marker(
                             state = MarkerState(position = pos),
                             title = f.callsign ?: f.icao24,
@@ -116,36 +149,43 @@ fun GlobeScreen(vm: GlobeViewModel = viewModel(), onRequestKeys: () -> Unit) {
                                 if (f.onGround) BitmapDescriptorFactory.HUE_ORANGE else BitmapDescriptorFactory.HUE_CYAN
                             ),
                             rotation = (f.trueTrack ?: 0.0).toFloat(),
-                            flat = true, // heading real — igual iconOrientation.js world-stable
+                            flat = true,
                             onClick = { vm.cockpit(pos, (f.trueTrack ?: 0.0).toFloat()); true }
                         )
                     }
                 }
-                // Earthquakes — src/data/earthquakes.js
                 if (layers.contains(LayerId.EARTHQUAKES)) {
                     quakes.forEach { q ->
                         Circle(center = LatLng(q.lat, q.lon), radius = (q.mag*20000).coerceAtLeast(5000.0),
                             fillColor = Color(0x66FF3D00), strokeColor = Color(0xFFFF3D00), strokeWidth = 2f)
                     }
                 }
-                // Satellites — src/data/satellites.js (840 objetos) — mostra como markers; orbit ring via Polyline
-                // Vessels — src/data/aisLiveVessels.js
-                // CCTV viewshed — src/data/cctvViewshed.js — Circle + Polygon
-                // Traffic — via MapProperties.isTrafficEnabled + TileOverlay TomTom se key
-
-                // HUD overlay — src/hud.js intelligence HUD
-                // No web é DOM overlay; aqui Compose overlay
             }
 
-            // HUD nativo — topo: estilo + contador (igual #style-indicator, #hud)
-            Column(Modifier.align(Alignment.TopStart).padding(12.dp).background(Color(0xAA060A14)).padding(8.dp)) {
+            // Banner quando sem Google key — explica tela branca e oferece OSM + config
+            if (!hasGoogleKey) {
+                Card(
+                    Modifier.align(Alignment.TopCenter).padding(12.dp).fillMaxWidth(),
+                    colors = CardDefaults.cardColors(containerColor = Color(0xFFB71C1C))
+                ) {
+                    Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                        Text("Mapa sem Google Maps API Key — usando OSM fallback", color = Color.White, fontSize = 12.sp)
+                        Text("O Google Photorealistic 3D (igual web) precisa de GOOGLE_MAPS_API_KEY. Sem ela o mapa ficava branco — agora usamos OpenStreetMap automaticamente. Para 3D HYBRID, configure a chave.", color = Color(0xFFFFCDD2), fontSize = 10.sp)
+                        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                            Button(onClick = onRequestKeys, colors = ButtonDefaults.buttonColors(containerColor = Color.White, contentColor = Color(0xFFB71C1C))) { Text("Configurar chave", fontSize = 11.sp) }
+                            if (!mapLoaded) Text("Carregando OSM…", color = Color.White, fontSize = 10.sp, modifier = Modifier.align(Alignment.CenterVertically))
+                        }
+                    }
+                }
+            }
+
+            // HUD topo
+            Column(Modifier.align(Alignment.TopStart).padding(top = if (!hasGoogleKey) 110.dp else 12.dp).padding(start = 12.dp).background(Color(0xAA060A14)).padding(8.dp)) {
                 Text("ACTIVE STYLE: ${listOf("NORMAL","CRT","NVG","FLIR","NOIR","SNOW","TACTICAL")[style]}", color = Color(0xFF00E5FF), fontSize = 10.sp)
-                Text("FLIGHTS ${flights.size}  QUAKES ${quakes.size}", color = Color.White, fontSize = 9.sp)
+                Text("FLIGHTS ${flights.size}  QUAKES ${quakes.size}  ${if (hasGoogleKey) "GOOGLE 3D" else "OSM FALLBACK"}", color = Color.White, fontSize = 9.sp)
                 Text("NO PLACE LEFT BEHIND", color = Color(0x66FFFFFF), fontSize = 8.sp, letterSpacing = 2.sp)
+                if (mapError != null) Text("Erro: $mapError", color = Color(0xFFFF5252), fontSize = 9.sp)
             }
-
-            // Voice FAB — src/voice/gevRealtime.js (OpenAI Realtime) — nativo: SpeechRecognizer + OkHttp WS
-            // Placeholder: mostra botão que abre VoiceScreen (não implementado aqui)
         }
     }
 }
