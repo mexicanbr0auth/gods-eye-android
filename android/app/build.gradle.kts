@@ -89,7 +89,7 @@ dependencies {
     implementation("com.google.maps.android:maps-ktx:3.8.2")
     implementation("com.squareup.retrofit2:retrofit:$retrofit")
     implementation("com.squareup.retrofit2:converter-gson:$retrofit")
-    implementation("org.jetbrains.kotlinx:kotlinx-serialization-json:1.7.3")
+    implementation("org.jetbrains.kotlinx:kotlinx-serialization-json:1.6.3")
     implementation("com.jakewharton.retrofit:retrofit2-kotlinx-serialization-converter:1.0.0")
     implementation("com.squareup.okhttp3:okhttp:$okhttp")
     implementation("com.squareup.okhttp3:logging-interceptor:$okhttp")
