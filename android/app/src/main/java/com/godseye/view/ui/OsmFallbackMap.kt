@@ -58,7 +58,6 @@ fun OsmFallbackMap(
                 val loc = MyLocationNewOverlay(GpsMyLocationProvider(c), this)
                 loc.enableMyLocation()
                 overlays.add(loc)
-                setOnClickListener { _, _ -> false }
                 mapView = this
             }
         },
